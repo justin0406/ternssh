@@ -1,0 +1,49 @@
+name: 🔄 自动同步原项目代码 (强制覆盖策略)
+
+on:
+  schedule:
+    # 每天凌晨 4:00 (北京时间中午 12:00) 自动执行同步
+    - cron: '0 4 * * *'
+  workflow_dispatch: # 允许你在 GitHub 页面上手动点击按钮触发同步
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: 签出你自己的仓库代码
+      - name: 签出当前仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 必须拉取完整历史，否则无法进行强制重置和对比
+
+      # Step 2: 配置 Git 机器人信息（用于在重新提交 Action 文件时署名）
+      - name: 配置 Git 签名
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Step 3: 添加原作者仓库并执行同步（包含 Action 保护机制）
+      - name: 强制同步原仓库并保护本地 Action
+        run: |
+          # 1. 定义需要保护的 Action 文件路径
+          ACTION_FILE=".github/workflows/sync-upstream.yml"
+
+          # 2. 添加原作者的远程仓库并拉取最新代码
+          git remote add upstream https://github.com/haradakashiwa/ternssh-cloudflare-workers-template.git
+          git fetch upstream
+
+          # 3. 切换到你的 main 分支，并强制重置到原作者的 main 分支
+          git checkout main
+          git reset --hard upstream/main
+
+          # 4. 【核心保护】从重置前那一瞬间的状态（ORIG_HEAD）中，把当前的 Action 文件单独捞回来
+          git checkout ORIG_HEAD -- "$ACTION_FILE"
+
+          # 5. 检查文件状态，如果被捞回来的文件有变动或原作者那本来就没有，则将其重新提交入库
+          if [ -n "$(git status --porcelain "$ACTION_FILE")" ]; then
+            git add "$ACTION_FILE"
+            git commit -m "🔧 自动化同步：成功捞回并保护 sync-upstream.yml 文件"
+          fi
+
+          # 6. 强推到你自己的仓库，完成 100% 完美的无损同步
+          git push origin main --force
